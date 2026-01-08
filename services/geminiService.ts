@@ -51,7 +51,8 @@ const THEORY_SCHEMA = {
 };
 
 export const getTheoryData = async (query: string): Promise<TheoryResponse> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+  // Fix: Initializing GoogleGenAI with exactly process.env.API_KEY as per guidelines.
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   const response = await ai.models.generateContent({
     model: 'gemini-3-pro-preview',
     contents: `Analyze and provide fingerings for Violin, Guitar, and Piano for: ${query}`,
@@ -62,11 +63,14 @@ export const getTheoryData = async (query: string): Promise<TheoryResponse> => {
     }
   });
   
-  return JSON.parse(response.text);
+  const text = response.text;
+  if (!text) throw new Error("No theory data returned");
+  return JSON.parse(text);
 };
 
 export const generateMusicImage = async (prompt: string): Promise<string> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+  // Fix: Initializing GoogleGenAI with exactly process.env.API_KEY as per guidelines.
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   const response = await ai.models.generateContent({
     model: 'gemini-2.5-flash-image',
     contents: {
@@ -88,7 +92,8 @@ export const generateMusicImage = async (prompt: string): Promise<string> => {
 };
 
 export const createTheoryChat = () => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+  // Fix: Initializing GoogleGenAI with exactly process.env.API_KEY as per guidelines.
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   return ai.chats.create({
     model: 'gemini-3-pro-preview',
     config: {

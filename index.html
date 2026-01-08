@@ -1,37 +1,536 @@
 
 <!DOCTYPE html>
 <html lang="en">
-  <head>
+<head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>HarmoniQ - AI Music Theory Lab</title>
+    <title>HarmoniQ - Strings Edition</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <!-- Markdown Parser -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <style>
-      body {
-        font-family: 'Inter', sans-serif;
-        background-color: #0f172a;
-        color: #f8fafc;
-      }
-      .mono { font-family: 'JetBrains Mono', monospace; }
-      ::-webkit-scrollbar { width: 8px; }
-      ::-webkit-scrollbar-track { background: #1e293b; }
-      ::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
-      ::-webkit-scrollbar-thumb:hover { background: #64748b; }
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #020617;
+            color: #f8fafc;
+            overflow-x: hidden;
+            margin: 0;
+            padding: 0;
+        }
+        .mono { font-family: 'JetBrains Mono', monospace; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: #475569; }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fade-in { animation: fadeIn 0.4s ease-out forwards; }
+        
+        .tab-active {
+            background-color: #4f46e5;
+            color: white !important;
+            box-shadow: 0 10px 15px -3px rgba(79, 70, 229, 0.3);
+        }
+
+        .loading-shimmer {
+            background: linear-gradient(90deg, #0f172a 25%, #1e293b 50%, #0f172a 75%);
+            background-size: 200% 100%;
+            animation: shimmer 1.5s infinite;
+        }
+
+        @keyframes shimmer {
+            0% { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
+        }
+
+        /* Clean Markdown Styles for Tutor */
+        .prose h1, .prose h2, .prose h3 { font-weight: 900; color: white; margin-top: 1rem; margin-bottom: 0.5rem; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.1em; color: #818cf8; }
+        .prose p { margin-bottom: 0.75rem; line-height: 1.6; }
+        .prose ul { list-style-type: disc; padding-left: 1.25rem; margin-bottom: 0.75rem; }
+        .prose li { margin-bottom: 0.25rem; }
+        .prose strong { color: #f8fafc; font-weight: 700; }
+        .prose hr { border: 0; border-top: 1px solid rgba(255,255,255,0.1); margin: 1rem 0; }
     </style>
-  <script type="importmap">
-{
-  "imports": {
-    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
-    "@google/genai": "https://esm.sh/@google/genai@^1.34.0",
-    "react/": "https://esm.sh/react@^19.2.3/",
-    "react": "https://esm.sh/react@^19.2.3",
-    "lucide-react": "https://esm.sh/lucide-react@^0.562.0"
-  }
-}
-</script>
+    <script type="importmap">
+    {
+      "imports": {
+        "@google/genai": "https://esm.sh/@google/genai@^1.34.0",
+        "lucide": "https://esm.sh/lucide@^0.475.0"
+      }
+    }
+    </script>
 </head>
-  <body>
-    <div id="root"></div>
-  </body>
+<body>
+    <div id="app"></div>
+
+    <script type="module">
+        import { GoogleGenAI, Type } from "@google/genai";
+        import { createIcons, icons } from "lucide";
+
+        // --- STATE MANAGEMENT ---
+        const state = {
+            activeTab: 'visualizer',
+            loading: false,
+            query: 'D Major scale',
+            theoryData: null,
+            chatMessages: [],
+            chatLoading: false,
+            imageHistory: [],
+            imageLoading: false,
+            error: null
+        };
+
+        // --- GEMINI API ---
+        const getTheoryData = async (query) => {
+            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+            const response = await ai.models.generateContent({
+                model: 'gemini-3-pro-preview', // Pro for better schema adherence
+                contents: `Analyze and provide positions for Violin, Guitar, and Piano: ${query}`,
+                config: {
+                    systemInstruction: `You are a world-class music theorist. 
+Output ONLY valid JSON.
+Positions:
+- Violin: 1=E, 2=A, 3=D, 4=G. position=half-steps from nut (0-12).
+- Guitar: 1=High E, 6=Low E.
+- Piano: 0=C, 1=C#, ..., 11=B.`,
+                    responseMimeType: 'application/json',
+                    responseSchema: {
+                        type: Type.OBJECT,
+                        properties: {
+                            name: { type: Type.STRING },
+                            type: { type: Type.STRING },
+                            notes: { type: Type.ARRAY, items: { type: Type.STRING } },
+                            intervals: { type: Type.ARRAY, items: { type: Type.STRING } },
+                            description: { type: Type.STRING },
+                            pianoKeys: { type: Type.ARRAY, items: { type: Type.INTEGER } },
+                            guitarPositions: {
+                                type: Type.ARRAY,
+                                items: {
+                                    type: Type.OBJECT,
+                                    properties: {
+                                        note: { type: Type.STRING },
+                                        fret: { type: Type.INTEGER },
+                                        string: { type: Type.INTEGER },
+                                        isRoot: { type: Type.BOOLEAN }
+                                    },
+                                    required: ['note', 'fret', 'string']
+                                }
+                            },
+                            violinPositions: {
+                                type: Type.ARRAY,
+                                items: {
+                                    type: Type.OBJECT,
+                                    properties: {
+                                        note: { type: Type.STRING },
+                                        position: { type: Type.INTEGER },
+                                        string: { type: Type.INTEGER },
+                                        isRoot: { type: Type.BOOLEAN }
+                                    },
+                                    required: ['note', 'position', 'string']
+                                }
+                            }
+                        },
+                        required: ['name', 'type', 'notes', 'intervals', 'description', 'pianoKeys', 'guitarPositions', 'violinPositions']
+                    }
+                }
+            });
+            return JSON.parse(response.text);
+        };
+
+        let chatInstance = null;
+        const getChatInstance = () => {
+            if (!chatInstance) {
+                const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+                chatInstance = ai.chats.create({
+                    model: 'gemini-3-pro-preview',
+                    config: {
+                        systemInstruction: `You are HarmoniQ, a minimalist AI music tutor.
+Rules for responses:
+1. Be extremely concise. Use bullet points and headers.
+2. Use Markdown headings (###) for sections.
+3. No long paragraphs.
+4. Focus on practical "how-to" advice for strings.
+5. Use bold for technical terms.`
+                    }
+                });
+            }
+            return chatInstance;
+        };
+
+        // --- VISUALIZATION TEMPLATES ---
+        const PianoTemplate = (highlightedKeys) => {
+            const keys = [
+                { note: 'C', isBlack: false, index: 0 },
+                { note: 'C#', isBlack: true, index: 1 },
+                { note: 'D', isBlack: false, index: 2 },
+                { note: 'D#', isBlack: true, index: 3 },
+                { note: 'E', isBlack: false, index: 4 },
+                { note: 'F', isBlack: false, index: 5 },
+                { note: 'F#', isBlack: true, index: 6 },
+                { note: 'G', isBlack: false, index: 7 },
+                { note: 'G#', isBlack: true, index: 8 },
+                { note: 'A', isBlack: false, index: 9 },
+                { note: 'A#', isBlack: true, index: 10 },
+                { note: 'B', isBlack: false, index: 11 },
+            ];
+
+            const renderOctave = (octIndex) => `
+                <div class="flex relative h-48 w-full min-w-[300px]">
+                ${keys.map(key => {
+                    const isHighlighted = highlightedKeys.includes(key.index);
+                    if (key.isBlack) {
+                        const leftPos = (octIndex * 7 + (key.index === 1 ? 1 : key.index === 3 ? 2 : key.index === 6 ? 4 : key.index === 8 ? 5 : 6)) * 40 - 12;
+                        return `<div class="absolute top-0 w-6 h-28 z-10 rounded-b-sm border border-black shadow-md transition-all duration-300 ${isHighlighted ? 'bg-indigo-500 scale-y-105' : 'bg-zinc-900'}" style="left: ${leftPos}px"></div>`;
+                    }
+                    return `<div class="w-10 h-48 border border-slate-300 rounded-b-md transition-all duration-300 ${isHighlighted ? 'bg-indigo-400' : 'bg-slate-50'}"></div>`;
+                }).join('')}
+                </div>
+            `;
+
+            return `
+                <div class="flex bg-slate-800 p-6 rounded-xl shadow-2xl overflow-x-auto border border-white/5">
+                <div class="flex">
+                    ${renderOctave(0)}
+                    ${renderOctave(1)}
+                </div>
+                </div>
+            `;
+        };
+
+        const ViolinTemplate = (notes) => {
+            const strings = [1, 2, 3, 4];
+            const stringNames = ['E', 'A', 'D', 'G'];
+            const positions = Array.from({ length: 13 }, (_, i) => i);
+
+            return `
+                <div class="bg-stone-950 p-10 rounded-2xl shadow-2xl overflow-x-auto border border-stone-800">
+                <div class="relative min-w-[800px] h-48 bg-gradient-to-r from-stone-900 via-stone-800 to-stone-900 rounded-lg shadow-inner">
+                    <div class="absolute -left-8 inset-y-0 flex flex-col justify-between py-2 text-[10px] font-bold text-stone-500">
+                    ${stringNames.map(name => `<span>${name}</span>`).join('')}
+                    </div>
+                    <div class="absolute inset-0 flex flex-col justify-between py-[18px]">
+                    ${strings.map(() => `<div class="h-[1px] bg-gradient-to-r from-stone-400 via-stone-200 to-stone-400 w-full opacity-60"></div>`).join('')}
+                    </div>
+                    <div class="flex">
+                    ${positions.map(p => `
+                        <div class="relative flex-1 min-w-[60px] h-48 border-r border-white/5 last:border-r-0 ${[2, 4, 5, 7, 9, 11].includes(p) ? 'bg-white/5' : ''}">
+                        <div class="absolute -top-6 left-1/2 -translate-x-1/2 text-[9px] font-mono text-stone-600">${p === 0 ? 'NUT' : p}</div>
+                        ${[2, 4, 5, 7].includes(p) ? `<div class="absolute left-1/2 top-0 bottom-0 w-[1px] bg-white/10"></div>` : ''}
+                        <div class="absolute inset-0 flex flex-col justify-between py-1">
+                            ${strings.map(s => {
+                                const note = notes.find(n => n.string === s && n.position === p);
+                                return `
+                                <div class="h-10 flex items-center justify-center relative z-20">
+                                    ${note ? `<div class="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold shadow-xl transition-all duration-300 transform hover:scale-125 ${note.isRoot ? 'bg-amber-500 text-stone-950 ring-2 ring-amber-300' : 'bg-indigo-600 text-white ring-1 ring-indigo-300'}">${note.note}</div>` : ''}
+                                </div>
+                                `;
+                            }).join('')}
+                        </div>
+                        </div>
+                    `).join('')}
+                    </div>
+                </div>
+                </div>
+            `;
+        };
+
+        const GuitarTemplate = (notes) => {
+            const strings = [1, 2, 3, 4, 5, 6];
+            const frets = Array.from({ length: 13 }, (_, i) => i);
+            return `
+                <div class="bg-slate-900 p-8 rounded-xl shadow-2xl overflow-x-auto border border-slate-700">
+                <div class="relative min-w-[800px]">
+                    <div class="absolute inset-0 flex flex-col justify-between py-[12px]">
+                    ${strings.map(s => `<div class="h-[2px] bg-slate-600 w-full opacity-40"></div>`).join('')}
+                    </div>
+                    <div class="flex">
+                    ${frets.map(f => `
+                        <div class="relative flex-1 min-w-[60px] h-40 border-r border-slate-500 last:border-r-0">
+                        <div class="absolute -top-6 left-1/2 -translate-x-1/2 text-xs font-mono text-slate-500">${f === 0 ? 'NUT' : f}</div>
+                        <div class="absolute inset-0 flex flex-col justify-between py-1">
+                            ${strings.map(s => {
+                                const note = notes.find(n => n.string === s && n.fret === f);
+                                return `
+                                <div class="h-6 flex items-center justify-center relative z-20">
+                                    ${note ? `<div class="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold shadow-lg ${note.isRoot ? 'bg-red-500 text-white' : 'bg-blue-600 text-white'}">${note.note}</div>` : ''}
+                                </div>
+                                `;
+                            }).join('')}
+                        </div>
+                        </div>
+                    `).join('')}
+                    </div>
+                </div>
+                </div>
+            `;
+        };
+
+        // --- RENDER ENGINE ---
+        const render = () => {
+            const app = document.getElementById('app');
+            if (!app) return;
+
+            app.innerHTML = `
+                <div class="min-h-screen flex flex-col">
+                <header class="sticky top-0 z-50 bg-slate-900/90 backdrop-blur-xl border-b border-white/5">
+                    <div class="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-500/20">
+                        <i data-lucide="music" class="text-white w-5 h-5"></i>
+                        </div>
+                        <div>
+                        <span class="text-lg font-black tracking-tight text-white block leading-none">HarmoniQ</span>
+                        <span class="text-[10px] text-indigo-400 font-bold uppercase tracking-widest">Strings Edition</span>
+                        </div>
+                    </div>
+
+                    <div class="hidden md:flex flex-1 max-w-xl mx-8">
+                        <div class="relative w-full">
+                        <input id="search-input" type="text" value="${state.query}" placeholder="Search scales, chords..." class="w-full bg-white/5 border border-white/10 rounded-full py-2.5 pl-12 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all text-slate-200 placeholder:text-slate-600" />
+                        <i data-lucide="search" class="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 w-4 h-4"></i>
+                        <button id="search-btn" class="absolute right-2 top-1/2 -translate-y-1/2 bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-1.5 rounded-full text-xs font-bold transition-all flex items-center gap-2">
+                            ${state.loading ? '<i data-lucide="loader-2" class="animate-spin w-3 h-3"></i>' : 'Analyze'}
+                        </button>
+                        </div>
+                    </div>
+
+                    <div class="flex gap-2">
+                        <button data-tab="visualizer" class="tab-btn px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${state.activeTab === 'visualizer' ? 'tab-active' : 'text-slate-500 hover:bg-white/5'}">Lab</button>
+                        <button data-tab="chat" class="tab-btn px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${state.activeTab === 'chat' ? 'tab-active' : 'text-slate-500 hover:bg-white/5'}">Tutor</button>
+                        <button data-tab="art" class="tab-btn px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${state.activeTab === 'art' ? 'tab-active' : 'text-slate-500 hover:bg-white/5'}">Gallery</button>
+                    </div>
+                    </div>
+                </header>
+
+                <main class="flex-1 max-w-7xl mx-auto w-full p-4 md:p-8">
+                    ${state.loading ? `
+                        <div class="space-y-12 animate-pulse">
+                            <div class="h-20 w-3/4 loading-shimmer rounded-2xl"></div>
+                            <div class="h-48 w-full loading-shimmer rounded-2xl"></div>
+                        </div>
+                    ` : renderContent()}
+                </main>
+
+                <footer class="py-12 border-t border-white/5 text-center bg-slate-950/50 space-y-4">
+                    <div class="flex items-center justify-center gap-3 text-slate-500 text-[10px] font-black tracking-[0.2em] uppercase">
+                    <i data-lucide="sparkles" class="w-3 h-3 text-indigo-500"></i>
+                    <span>Multimodal Intelligence</span>
+                    </div>
+                    <p class="text-[9px] text-slate-700 uppercase font-bold tracking-widest">Designed for String Musicians</p>
+                </footer>
+                </div>
+            `;
+
+            attachEvents();
+            createIcons({ icons });
+        };
+
+        const renderContent = () => {
+            if (state.activeTab === 'visualizer') {
+                if (state.error) {
+                    return `
+                        <div class="h-[60vh] flex flex-col items-center justify-center text-center">
+                            <div class="w-16 h-16 bg-red-500/10 text-red-500 rounded-full flex items-center justify-center mb-4">
+                                <i data-lucide="alert-triangle"></i>
+                            </div>
+                            <h3 class="text-xl font-bold text-white mb-2">Analysis Error</h3>
+                            <p class="text-slate-500 mb-6 max-w-sm text-xs mono">${state.error}</p>
+                            <button onclick="window.quickSearch('C Major')" class="bg-indigo-600 px-6 py-2 rounded-xl text-sm font-bold">Try Basic Scale</button>
+                        </div>
+                    `;
+                }
+
+                if (!state.theoryData) {
+                    return `
+                        <div class="h-[70vh] flex flex-col items-center justify-center text-center animate-fade-in">
+                        <div class="w-20 h-20 bg-slate-900 border border-white/10 rounded-3xl flex items-center justify-center shadow-2xl mb-8">
+                            <i data-lucide="music" class="text-indigo-500 w-10 h-10"></i>
+                        </div>
+                        <h2 class="text-4xl font-black text-white italic mb-4">Visualize Music.</h2>
+                        <p class="text-slate-500 mb-8 max-w-sm">Search for a scale or chord to explore it across all instruments.</p>
+                        <div class="flex flex-wrap justify-center gap-2">
+                            ${['G Major scale', 'A Harmonic minor', 'C7 chord', 'D Dorian'].map(t => `<button onclick="window.quickSearch('${t}')" class="px-4 py-2 bg-white/5 hover:bg-indigo-600 rounded-lg text-xs font-bold text-slate-400 transition-all">${t}</button>`).join('')}
+                        </div>
+                        </div>
+                    `;
+                }
+                const d = state.theoryData;
+                return `
+                    <div class="space-y-12 animate-fade-in">
+                        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                        <div class="lg:col-span-2 space-y-4">
+                            <h2 class="text-5xl font-black text-white tracking-tighter">${d.name}</h2>
+                            <p class="text-slate-400 text-lg font-light leading-relaxed">${d.description}</p>
+                        </div>
+                        <div class="bg-white/5 border border-white/10 rounded-3xl p-6">
+                            <h3 class="font-black uppercase text-[10px] tracking-widest text-indigo-400 mb-4 border-b border-white/5 pb-2">Analysis</h3>
+                            <div class="space-y-4">
+                            <div><p class="text-[9px] text-slate-500 font-bold mb-2 uppercase">Notes</p><div class="flex flex-wrap gap-1">${d.notes.map(n => `<span class="px-2 py-1 bg-slate-900 rounded text-xs font-bold">${n}</span>`).join('')}</div></div>
+                            <div><p class="text-[9px] text-slate-500 font-bold mb-2 uppercase">Intervals</p><div class="flex flex-wrap gap-1">${d.intervals.map(i => `<span class="px-2 py-1 bg-indigo-950/30 text-indigo-400 rounded text-xs font-mono">${i}</span>`).join('')}</div></div>
+                            </div>
+                        </div>
+                        </div>
+                        <section class="space-y-4">
+                        <h4 class="text-[10px] font-black text-slate-600 uppercase tracking-[0.3em]">Violin Fingerboard</h4>
+                        ${ViolinTemplate(d.violinPositions)}
+                        </section>
+                        <div class="grid grid-cols-1 xl:grid-cols-2 gap-8">
+                        <section class="space-y-4"><h4 class="text-[10px] font-black text-slate-600 uppercase tracking-[0.3em]">Keyboard</h4>${PianoTemplate(d.pianoKeys)}</section>
+                        <section class="space-y-4"><h4 class="text-[10px] font-black text-slate-600 uppercase tracking-[0.3em]">Guitar</h4>${GuitarTemplate(d.guitarPositions)}</section>
+                        </div>
+                    </div>
+                `;
+            } else if (state.activeTab === 'chat') {
+                return `
+                    <div class="max-w-3xl mx-auto h-[600px] flex flex-col bg-slate-900 border border-white/10 rounded-3xl overflow-hidden shadow-2xl animate-fade-in">
+                        <div class="p-4 bg-slate-800/50 border-b border-white/5 flex items-center justify-between">
+                            <div class="flex items-center gap-3">
+                                <i data-lucide="bot" class="text-indigo-400"></i>
+                                <span class="font-black uppercase text-xs tracking-widest">HarmoniQ Tutor</span>
+                            </div>
+                            <span class="text-[9px] text-slate-500 font-bold uppercase">Brief & Structured Mode</span>
+                        </div>
+                        <div id="chat-scroller" class="flex-1 overflow-y-auto p-6 space-y-6">
+                        ${state.chatMessages.length === 0 ? '<div class="h-full flex flex-col items-center justify-center opacity-20"><i data-lucide="message-square" class="w-12 h-12 mb-2"></i><p class="text-xs font-black uppercase tracking-widest">Ask a theory question</p></div>' : state.chatMessages.map(m => `
+                            <div class="flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} animate-fade-in">
+                            <div class="max-w-[90%] p-4 rounded-2xl text-sm ${m.role === 'user' ? 'bg-indigo-600 text-white rounded-tr-none' : 'bg-slate-800/80 text-slate-200 border border-white/10 rounded-tl-none prose shadow-xl'}">
+                                ${m.role === 'user' ? m.content : marked.parse(m.content)}
+                            </div>
+                            </div>
+                        `).join('')}
+                        ${state.chatLoading ? '<div class="flex justify-start"><div class="bg-slate-800 p-4 rounded-2xl border border-white/5 flex items-center gap-2"><i data-lucide="loader-2" class="w-4 h-4 animate-spin text-indigo-400"></i><span class="text-xs text-slate-500 uppercase font-black tracking-widest italic">Thinking...</span></div></div>' : ''}
+                        </div>
+                        <div class="p-4 bg-slate-800/50 border-t border-white/5">
+                        <div class="flex gap-2">
+                            <input id="chat-input" type="text" placeholder="Explain the Dorian mode concisely..." class="flex-1 bg-slate-950 border border-white/10 rounded-2xl px-5 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 text-white" />
+                            <button id="chat-send-btn" class="bg-indigo-600 p-3 rounded-2xl text-white shadow-lg"><i data-lucide="send" class="w-5 h-5"></i></button>
+                        </div>
+                        </div>
+                    </div>
+                `;
+            } else if (state.activeTab === 'art') {
+                return `
+                    <div class="max-w-4xl mx-auto space-y-8 animate-fade-in">
+                        <div class="bg-slate-900 border border-white/10 rounded-3xl p-8 shadow-2xl relative overflow-hidden">
+                        <div class="absolute -top-12 -right-12 w-48 h-48 bg-indigo-500/10 blur-3xl rounded-full"></div>
+                        <h3 class="text-2xl font-black text-white mb-6 flex items-center gap-3">
+                            <i data-lucide="sparkles" class="text-indigo-400"></i> Sonic Visualizer
+                        </h3>
+                        <textarea id="art-prompt" placeholder="A golden violin floating in a cosmic ocean of sheet music..." class="w-full bg-white/5 border border-white/10 rounded-2xl p-6 text-slate-200 h-32 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"></textarea>
+                        <button id="art-gen-btn" class="w-full bg-indigo-600 hover:bg-indigo-500 mt-6 py-4 rounded-2xl text-white font-black uppercase text-xs tracking-[0.2em] shadow-xl shadow-indigo-900/40 flex items-center justify-center gap-2">
+                            ${state.imageLoading ? '<i data-lucide="loader-2" class="animate-spin"></i> Rendering...' : '<i data-lucide="zap"></i> Generate Fast Art'}
+                        </button>
+                        </div>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        ${state.imageHistory.map(img => `
+                            <div class="group relative bg-slate-900 border border-white/10 rounded-2xl overflow-hidden animate-fade-in">
+                            <img src="${img.url}" class="w-full aspect-video object-cover" />
+                            </div>
+                        `).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+            return '';
+        };
+
+        const attachEvents = () => {
+            document.getElementById('search-btn')?.addEventListener('click', handleSearch);
+            document.getElementById('search-input')?.addEventListener('keypress', (e) => e.key === 'Enter' && handleSearch());
+            document.getElementById('search-input')?.addEventListener('input', (e) => state.query = e.target.value);
+
+            document.querySelectorAll('.tab-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    state.activeTab = btn.dataset.tab;
+                    state.error = null;
+                    render();
+                });
+            });
+
+            document.getElementById('chat-send-btn')?.addEventListener('click', handleChatSend);
+            document.getElementById('chat-input')?.addEventListener('keypress', (e) => e.key === 'Enter' && handleChatSend());
+            
+            document.getElementById('art-gen-btn')?.addEventListener('click', handleArtGenerate);
+        };
+
+        const handleSearch = async () => {
+            if (!state.query || state.loading) return;
+            state.loading = true;
+            state.error = null;
+            render();
+            try {
+                state.theoryData = await getTheoryData(state.query);
+                state.activeTab = 'visualizer';
+            } catch (err) {
+                console.error("Theory analysis failed:", err);
+                state.error = err.message || "Something went wrong.";
+            } finally {
+                state.loading = false;
+                render();
+            }
+        };
+
+        const handleChatSend = async () => {
+            const input = document.getElementById('chat-input');
+            const content = input?.value;
+            if (!content || state.chatLoading) return;
+
+            state.chatMessages.push({ role: 'user', content });
+            state.chatLoading = true;
+            render();
+
+            try {
+                const chat = getChatInstance();
+                const result = await chat.sendMessage({ message: content });
+                state.chatMessages.push({ role: 'model', content: result.text });
+            } catch (err) {
+                state.chatMessages.push({ role: 'model', content: "Connection lost. Please try again." });
+            } finally {
+                state.chatLoading = false;
+                render();
+                const scroller = document.getElementById('chat-scroller');
+                if (scroller) scroller.scrollTop = scroller.scrollHeight;
+            }
+        };
+
+        const handleArtGenerate = async () => {
+            const prompt = document.getElementById('art-prompt').value;
+            if (!prompt || state.imageLoading) return;
+
+            state.imageLoading = true;
+            render();
+
+            try {
+                const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+                const response = await ai.models.generateContent({
+                    model: 'gemini-2.5-flash-image',
+                    contents: { parts: [{ text: `A vibrant music theory visualization: ${prompt}` }] },
+                    config: { imageConfig: { aspectRatio: "16:9" } }
+                });
+
+                for (const part of response.candidates?.[0]?.content?.parts || []) {
+                    if (part.inlineData) {
+                        state.imageHistory.unshift({ url: `data:image/png;base64,${part.inlineData.data}`, prompt, timestamp: Date.now() });
+                    }
+                }
+            } catch (err) {
+                alert("Visual generation failed.");
+            } finally {
+                state.imageLoading = false;
+                render();
+            }
+        };
+
+        window.quickSearch = (q) => {
+            state.query = q;
+            handleSearch();
+        };
+
+        render();
+    </script>
+</body>
 </html>
