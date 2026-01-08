@@ -1,0 +1,8 @@
+{
+  "name": "HarmoniQ - AI Music Theory Lab",
+  "description": "An advanced music theory visualization tool that uses AI to explain complex concepts, generate fretboard/keyboard layouts, and create music-inspired visual art.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
